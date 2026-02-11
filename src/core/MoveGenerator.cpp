@@ -20,7 +20,7 @@ const std::vector<Coordinate> KING_DIRS= {
 
 // --- Helper: Attack Detection ---
 // Returns true if 'square' is being attacked by 'attackerColor'
-bool isSquareAttacked(const Board& board, Coordinate square, Piece::Color attackerColor) {
+bool MoveGenerator::isSquareAttacked(const Board& board, Coordinate square, Piece::Color attackerColor) {
     // 1. Check for Knight attacks (If a knight is on a square a knight would jump to)
     for(const auto& dir: KNIGHT_DIRS) {
         Coordinate target= square + dir;
@@ -89,69 +89,55 @@ bool isSquareAttacked(const Board& board, Coordinate square, Piece::Color attack
     return false;
 }
 
-std::vector<Move> MoveGenerator::generateMoves(const Board& board) {
-    std::vector<Move> moves;
-    for(auto& [piece, coord]: board.pieces) {
-        if(Piece::GetColor(piece) != board.activeColor)
+std::vector<Move>& MoveGenerator::generateMoves() {
+    _pseudomoves.clear();
+    for(auto& [piece, coord]: _board.pieces) {
+        if(Piece::GetColor(piece) != _board.activeColor)
             continue; // Skip opponent's pieces
 
         Piece::PieceType type= Piece::GetPieceType(piece);
         switch(type) {
         case Piece::PAWN:
-            generatePawnMoves(board, piece, coord, moves);
+            generatePawnMoves(_board, piece, coord, _pseudomoves);
             break;
         case Piece::KNIGHT:
-            generateKnightMoves(board, piece, coord, moves);
+            generateKnightMoves(_board, piece, coord, _pseudomoves);
             break;
         case Piece::BISHOP:
-            generateSlidingMoves(board, piece, coord, moves, pieceDirections.at(Piece::BISHOP));
+            generateSlidingMoves(_board, piece, coord, _pseudomoves, pieceDirections.at(Piece::BISHOP));
             break;
         case Piece::ROOK:
-            generateSlidingMoves(board, piece, coord, moves, pieceDirections.at(Piece::ROOK));
+            generateSlidingMoves(_board, piece, coord, _pseudomoves, pieceDirections.at(Piece::ROOK));
             break;
         case Piece::QUEEN:
-            generateSlidingMoves(board, piece, coord, moves, pieceDirections.at(Piece::QUEEN));
+            generateSlidingMoves(_board, piece, coord, _pseudomoves, pieceDirections.at(Piece::QUEEN));
             break;
         case Piece::KING:
-            generateKingMoves(board, piece, coord, moves);
+            generateKingMoves(_board, piece, coord, _pseudomoves);
             break;
         }
     }
-    return moves;
+    return _pseudomoves;
 }
 
-std::vector<Move> MoveGenerator::generateLegalMoves(Board& board) {
-    auto pseudoMoves= generateMoves(board);
-    std::vector<Move> legalMoves;
-    for(const Move& move: pseudoMoves) {
-        board.makeMove(move);
+std::vector<Move>& MoveGenerator::generateLegalMoves() {
+    _moves.clear();
+    generateMoves(); // Auto fills _pseudomoves with all possible moves (including illegal ones)
+    for(const Move& move: _pseudomoves) {
+        _board.makeMove(move);
 
         // Find our king:
-        Coordinate myKingPos(0, 0);
-        bool kingFound= false;
-        // Search pieces list for king
-        Piece::Color myColor= (board.activeColor == Piece::WHITE) ? Piece::BLACK : Piece::WHITE;
-        // Note: board.activeColor flipped after makeMove, so we want the "old" active color
+        Piece::Color myColor= (_board.activeColor == Piece::WHITE) ? Piece::BLACK : Piece::WHITE;
+        Coordinate myKingPos= (myColor == Piece::WHITE) ? _board.whiteKingPos : _board.blackKingPos;
 
-        for(auto& [p, c]: board.pieces) {
-            if(Piece::IsColor(p, myColor) && Piece::IsType(p, Piece::KING)) {
-                myKingPos= c;
-                kingFound= true;
-                break;
-            }
+        if(!isSquareAttacked(_board, myKingPos, _board.activeColor)) {
+            _moves.push_back(move);
         }
 
-        if(kingFound) {
-            if(!isSquareAttacked(board, myKingPos, board.activeColor)) {
-                legalMoves.push_back(move);
-            }
-        } else {
-            // If king is captured/missing, move is illegal (or variant logic)
-        }
-
-        board.undoMove();
+        _board.undoMove();
     }
-    return legalMoves;
+
+    return _moves;
 }
 
 void MoveGenerator::generatePawnMoves(const Board& board, Piece::Piece piece, Coordinate coord, std::vector<Move>& moves) {

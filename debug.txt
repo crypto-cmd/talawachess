@@ -1,0 +1,11 @@
+Depth: 1 Nodes: 44 Time: 9.1522e-05s
+Depth: 2 Nodes: 1486 Time: 0.00164362s
+Depth: 3 Nodes: 62379 Time: 0.0392891s
+Depth: 4 Nodes: 2103487 Time: 1.22769s
+Depth: 5 Nodes: 89941194 Time: 52.1189s
+
+Depth: 1 Nodes: 44 Time: 4.4155e-05s
+Depth: 2 Nodes: 1486 Time: 0.000892237s
+Depth: 3 Nodes: 62379 Time: 0.0347478s
+Depth: 4 Nodes: 2103487 Time: 0.983922s
+Depth: 5 Nodes: 89941194 Time: 46.7865s

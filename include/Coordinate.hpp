@@ -7,6 +7,7 @@ struct Coordinate {
     int file; // 0-7 for a-h
     int rank; // 0-7 for 1-8
 
+    Coordinate(): file(-1), rank(-1) {}
     Coordinate(int file, int rank): file(file), rank(rank) {}
     Coordinate(int square): file(square % 8), rank(square / 8) {}
     Coordinate(const char* alg): file(alg[0] - 'a'), rank(alg[1] - '1') {}

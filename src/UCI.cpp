@@ -41,18 +41,17 @@ void UCI::listen() {
                     }
                 }
                 _bot.setFen(fen);
-                ss >> token; // Attempt to read "moves"
             }
 
             ss >> token; // Expect "moves" or end of line
             if(token == "moves") {
                 while(ss >> token) {
-                    _bot.performMove(token); // Apply the move to the board
+                    _bot.performMove(token);
                 }
             }
         } else if(token == "go") {
 
-            _bot.getBoard().print(); // DEBUG: Print the board before thinking
+            // _bot.getBoard().print(); // DEBUG: Print the board before thinking
             // "go" asks the engine to start thinking.
             // 1. Initialize variables with default values
             int wtime= 0;      // White time remaining (ms)
@@ -78,7 +77,7 @@ void UCI::listen() {
             // 4. Calculate allocated time
             // Simple formula: Use 1/30th of remaining time + increment
             // (Safety: If we have very little time, move nearly instantly)
-            int timeToThink= 0;
+            int timeToThink= 10000; // Default to 3 second if no time info provided
 
             if(myTime > 0) {
                 timeToThink= (myTime / movestogo) + (myInc / 2);
@@ -88,12 +87,12 @@ void UCI::listen() {
                 if(timeToThink < 0) timeToThink= 10; // Minimum snap move
             }
             // DEBUG: Tell the GUI how much time we are using
-            std::cout << "info string Time Left: " << myTime << "ms. Thinking for: " << timeToThink << "ms." << std::endl;
 
-            auto move= _bot.getBestMove(timeToThink);
-            std::cout << "bestmove " << move.ToString() << std::endl;
+            auto result= _bot.getBestMove(timeToThink);
+            auto bestMove= result.first;
+            int score= result.second;
 
-
+            std::cout << "bestmove " << bestMove.ToString() << std::endl;
         }
     }
 }

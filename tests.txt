@@ -1,9 +1,14 @@
 # Format: FEN | Expected Move
 
-# Simple Mate in 1 (White to move) - Rooks on a7/b7, King on h8
-7k/RR6/8/8/8/8/8/7K w - - 0 1 | b7b8
+# Simple Mate in 1 (White to move)
+1k6/8/8/8/8/5qP1/5P1P/5RKb b - - 0 1 | f3g2
 
 # Complex Mate in 3
 8/5pk1/1p2p3/1N2N3/PP1Pn1P1/R3P1nP/6K1/2r5 b - - 4 41 | c1c2
 
+# Complex Mate in 4
+r3k3/2p1bpp1/p1nqp1p1/1p6/6nB/P1NP3P/BPP2PP1/R2QR1K1 b q - 0 15 | d6h2
+
+# Queen Sac Mate in 4
+r4b1k/1b3qNp/p5pP/2r1pN2/4P3/2pB1Q2/P1P5/KR4R1 b - - 1 29 | f7a2
 # End of File

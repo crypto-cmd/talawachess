@@ -10,6 +10,7 @@ struct Move {
     Piece::Piece promotion= Piece::NONE;  // NONE if not a promotion
     Piece::Piece captured= Piece::NONE;   // NONE if no capture
     Piece::Piece movedPiece= Piece::NONE; // The piece that is moving (useful for undoing moves)
+    int score= 0; // For move ordering in search
 
     inline std::string ToString() const {
         std::string s= from.toAlgebraic() + to.toAlgebraic();
