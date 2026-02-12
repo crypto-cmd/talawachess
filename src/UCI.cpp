@@ -77,21 +77,19 @@ void UCI::listen() {
             // 4. Calculate allocated time
             // Simple formula: Use 1/30th of remaining time + increment
             // (Safety: If we have very little time, move nearly instantly)
-            int timeToThink= 10000; // Default to 3 second if no time info provided
+            int timeToThink= 5000; // Default to 5 second if no time info provided
 
-            if(myTime > 0) {
-                timeToThink= (myTime / movestogo) + (myInc / 2);
+            // if(myTime > 0) {
+            //     timeToThink= (myTime / movestogo) + (myInc / 2);
 
-                // Safety buffer: leave at least 50ms on the clock
-                if(timeToThink >= myTime) timeToThink= myTime - 50;
-                if(timeToThink < 0) timeToThink= 10; // Minimum snap move
-            }
-            // DEBUG: Tell the GUI how much time we are using
+            //     // Safety buffer: leave at least 50ms on the clock
+            //     if(timeToThink >= myTime) timeToThink= myTime - 50;
+            //     if(timeToThink < 0) timeToThink= 10; // Minimum snap move
+            // }
 
             auto result= _bot.getBestMove(timeToThink);
             auto bestMove= result.first;
             int score= result.second;
-
             std::cout << "bestmove " << bestMove.ToString() << std::endl;
         }
     }

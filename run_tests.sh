@@ -35,7 +35,7 @@ while IFS='|' read -r fen expected_move_raw; do
 
     # 2. Prepare Engine Input
     # We ask the engine to go, then quit.
-    input="position fen $fen\ngo\nquit\n"
+    input="position fen $fen\ngo wtime 60000 btime 200000 winc 0 binc 0 \nquit\n"
 
     # 3. Run Engine and Capture Output + Time
     # We use date +%s%N to get nanoseconds for precision
@@ -48,12 +48,13 @@ while IFS='|' read -r fen expected_move_raw; do
     
     # Calculate duration in milliseconds
     duration=$(( (end_time - start_time) / 1000000 ))
-
-    # 4. Extract 'bestmove'
+    # 4. Print info line (optional, can be commented out)
+    echo -e "   Engine Output:\n$engine_output"
+    # 5. Extract 'bestmove'
     # Grep finds the line, awk gets the second word (e.g., "bestmove e2e4")
     engine_move=$(echo "$engine_output" | grep "bestmove" | awk '{print $2}')
 
-    # 5. Compare Results
+    # 6. Compare Results
     if [ "$engine_move" == "$expected_move" ]; then
         echo -e "[ ${GREEN}PASS${NC} ] Time: ${duration}ms"
     else

@@ -2,7 +2,7 @@
 
 # 1. Configuration
 BINARY="./build/talawachess.exe"
-FEN="8/5pk1/1p2p3/1N2N3/PP1Pn1P1/R3P1nP/6K1/2r5 b - - 4 41"
+FEN="4r2k/1p3rbp/2p1N1pn/p3n3/P2NB3/1P4q1/4R1P1/B1Q2RK1 b - - 4 32"
 
 # 2. Check if engine exists
 if [ ! -f "$BINARY" ]; then

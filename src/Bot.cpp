@@ -10,6 +10,8 @@ std::array<std::array<int, 64>, 7> Bot::PieceSquareTables= {{{0}}}; // Initializ
 
 Bot::Bot(): _board(),
             _moveGen(_board) {
+    // Initialize Transposition Table (64 MB)
+    resizeTT(512);
     // Initialize pawn piece-square table
     PieceSquareTables[core::Piece::PAWN]=
         {0, 0, 0, 0, 0, 0, 0, 0,
@@ -66,6 +68,34 @@ Bot::Bot(): _board(),
          -4, 3, -14, -50, -57, -18, 13, 4,
          17, 30, -3, -14, 6, -1, 40, 18};
 }
+void Bot::resizeTT(size_t sizeInMB) {
+    // Clear old entries and free their moves first
+    for(auto& entry: _tt) {
+        delete entry.bestMove;
+    }
+    size_t numEntries= (sizeInMB * 1024 * 1024) / sizeof(TTEntry);
+    _tt.clear();
+    _tt.resize(numEntries);
+    // Initialize all entries properly
+    for(auto& entry: _tt) {
+        entry.bestMove= nullptr;
+        entry.zobristHash= 0;
+        entry.depth= -1;
+        entry.flag= TT_EXACT;
+        entry.score= -INF;
+    }
+}
+
+void Bot::clearTT() {
+    for(auto& entry: _tt) {
+        delete entry.bestMove; // Free any existing move
+        entry.bestMove= nullptr;
+        entry.zobristHash= 0;
+        entry.depth= -1;
+        entry.flag= TT_EXACT;
+        entry.score= -INF;
+    }
+}
 void Bot::setFen(const std::string& fen) {
     _board.setFen(fen);
 }
@@ -80,9 +110,14 @@ void Bot::performMove(const std::string& moveStr) {
     }
     throw std::invalid_argument("Invalid move string: " + moveStr);
 }
-void Bot::orderMoves(std::vector<core::Move>& moves) const{
+void Bot::orderMoves(std::vector<core::Move>& moves, const core::Move* ttMove) const {
     for(auto& move: moves) {
         move.score= 0;
+        // 1. Prioritize Transposition Table Move
+        if(ttMove != nullptr && move.from == ttMove->from && move.to == ttMove->to) {
+            move.score= 2000000; // Highest priority
+            continue;
+        }
         // 2. Prioritize Captures using MVV-LVA
         if(move.captured != core::Piece::NONE) {
             // (Victim Value * 10) - Attacker Value
@@ -103,36 +138,82 @@ void Bot::orderMoves(std::vector<core::Move>& moves) const{
         return a.score > b.score;
     });
 }
-int Bot::search(int depth, int alpha, int beta) {
+int Bot::search(int depth, int ply, int alpha, int beta) {
     using namespace talawachess::core::Piece;
     using namespace talawachess::core::board;
-    if(depth == 0) return evaluate(); // quiesce(alpha, beta);
+
+    TTEntry& ttEntry= _tt[_board.zobristHash % _tt.size()];
+    bool ttHit= (ttEntry.zobristHash == _board.zobristHash);
+    core::Move* ttBestMove= nullptr;
+    if(ttHit) {
+        ttBestMove= ttEntry.bestMove;
+        if(ttEntry.depth >= depth) {
+            int score= ttEntry.score;
+
+            if(score > MATE_VAL - 100) score-= ply; // Adjust mate scores for distance
+            else if(score < -MATE_VAL + 100) score+= ply;
+
+            if(ttEntry.flag == TT_EXACT) return score;
+            if(ttEntry.flag == TT_ALPHA && score <= alpha) return alpha;
+            if(ttEntry.flag == TT_BETA && score >= beta) return beta;
+        }
+    }
+
+    if(depth == 0) return quiesce(alpha, beta, ply);
     auto moves= _moveGen.generateLegalMoves();
 
-    orderMoves(moves); // Move ordering for better alpha-beta performance
+    orderMoves(moves, ttBestMove); // Move ordering for better alpha-beta performance
     if(moves.empty()) {
         // Check for checkmate or stalemate
         auto attackerColor= _board.activeColor == Color::WHITE ? Color::BLACK : Color::WHITE;
         auto kingPos= _board.activeColor == Color::WHITE ? _board.whiteKingPos : _board.blackKingPos;
         if(MoveGenerator::isSquareAttacked(_board, kingPos, attackerColor)) {
-            return -MATE_VAL + (10 - depth); // Checkmate, prefer faster mates
+            checkMatesFound++;
+            return -MATE_VAL + ply; // Checkmate, prefer faster mates
         } else {
             return 0; // Stalemate
         }
     }
 
+    int originalAlpha= alpha;
+    core::Move bestMoveThisNode;
     for(const auto& move: moves) {
         _board.makeMove(move);
-        int evaluation= -search(depth - 1, -beta, -alpha);
+        int evaluation= -search(depth - 1, ply + 1, -beta, -alpha);
         _board.undoMove();
         if(evaluation >= beta) {
-            return beta; // Snip
+            int storedScore= evaluation;
+            if(storedScore > MATE_VAL - 100) storedScore+= ply;
+            else if(storedScore < -MATE_VAL + 100) storedScore-= ply;
+
+            ttEntry.zobristHash= _board.zobristHash;
+            delete ttEntry.bestMove;                // Free old move before overwriting
+            ttEntry.bestMove= new core::Move(move); // Store a copy of the move
+            ttEntry.score= storedScore;
+            ttEntry.depth= depth;
+            ttEntry.flag= TT_BETA;
+            return beta; // Fail hard beta cutoff
         }
-        alpha= std::max(alpha, evaluation);
+        if(evaluation > alpha) {
+            alpha= evaluation;
+            bestMoveThisNode= move;
+        }
     }
+    int storedScore= alpha;
+    if(storedScore > MATE_VAL - 100) storedScore+= ply;
+    else if(storedScore < -MATE_VAL + 100) storedScore-= ply;
+
+    ttEntry.zobristHash= _board.zobristHash;
+    delete ttEntry.bestMove;                            // Free old move before overwriting
+    ttEntry.bestMove= new core::Move(bestMoveThisNode); // Store a copy of the move
+    ttEntry.score= storedScore;
+    ttEntry.depth= depth;
+    ttEntry.flag= (alpha > originalAlpha) ? TT_EXACT : TT_ALPHA;
+
     return alpha;
 }
-int Bot::evaluate() const {
+int Bot::evaluate() {
+    positionsEvaluated++;
     int score= 0;
     for(const auto& [piece, coord]: _board.pieces) {
         if(piece == Piece::NONE) continue;
@@ -147,30 +228,84 @@ int Bot::evaluate() const {
     score*= perspectiveMultiplier; // Positive if good for side to move, negative if bad
     return score;
 }
-int Bot::quiesce(int alpha, int beta) {
-    return evaluate(); // Placeholder: In a full implementation, this would explore captures and checks until a quiet position is reached
+int Bot::quiesce(int alpha, int beta, int ply) {
+    // Generate legal moves to check for checkmate/stalemate
+    auto moves= _moveGen.generateLegalMoves();
+
+    // Check for checkmate or stalemate
+    if(moves.empty()) {
+        auto attackerColor= _board.activeColor == Color::WHITE ? Color::BLACK : Color::WHITE;
+        auto kingPos= _board.activeColor == Color::WHITE ? _board.whiteKingPos : _board.blackKingPos;
+        if(MoveGenerator::isSquareAttacked(_board, kingPos, attackerColor)) {
+            checkMatesFound++;
+            return -MATE_VAL + ply; // Checkmate, prefer faster mates
+        } else {
+            return 0; // Stalemate
+        }
+    }
+
+    // 1. Stand Pat: Assumes we can just "stop" and not capture anything if our position is good
+    int stand_pat= evaluate();
+    if(stand_pat >= beta) return beta;
+    if(alpha < stand_pat) alpha= stand_pat;
+
+    // 2. Search only Captures
+    orderMoves(moves, nullptr); // Order captures by MVV-LVA, no TT move in quiescence
+
+    for(const auto& move: moves) {
+        // FILTER: Only look at Captures and Promotions
+        if(move.captured == core::Piece::NONE && move.promotion == core::Piece::NONE) continue;
+
+        _board.makeMove(move);
+        int score= -quiesce(-beta, -alpha, ply + 1);
+        _board.undoMove();
+
+        if(score >= beta) return beta;
+        if(score > alpha) alpha= score;
+    }
+    return alpha;
 }
 
 std::pair<core::Move, int> Bot::getBestMove(int timeLimitMs) {
+    checkMatesFound= 0;    // Reset checkmate counter for this search
+    positionsEvaluated= 0; // Reset positions evaluated counter for this search
     auto startTime= std::chrono::high_resolution_clock::now();
 
     core::Move bestMove;
     int bestScore= -INF;
+    int depthReached= 0;
 
-    for(int depth= 1; depth <= 10; ++depth) { // Iterative deepening
+    for(int depth= 1; depth <= 21; ++depth) { // Iterative deepening
         auto moves= _moveGen.generateLegalMoves();
         if(moves.empty()) break; // No moves available
 
+        TTEntry& ttEntry= _tt[_board.zobristHash % _tt.size()];
+        core::Move* ttMove= (ttEntry.zobristHash == _board.zobristHash) ? ttEntry.bestMove : nullptr;
+        orderMoves(moves, ttMove); // Move ordering for better alpha-beta performance
+
+        // Reset best for this depth - each depth should find its own best move
+        core::Move bestMoveThisDepth;
+        int bestScoreThisDepth= -INF;
+        int alpha= -INF;
+
         for(const auto& move: moves) {
             _board.makeMove(move);
-            int score= -search(depth - 1, -INF, INF);
+            int score= -search(depth - 1, 1, -INF, -alpha);
             _board.undoMove();
 
-            if(score > bestScore) {
-                bestScore= score;
-                bestMove= move;
+            if(score > bestScoreThisDepth) {
+                bestScoreThisDepth= score;
+                bestMoveThisDepth= move;
+            }
+            if(score > alpha) {
+                alpha= score;
             }
         }
+
+        // Update overall best from this completed depth
+        bestMove= bestMoveThisDepth;
+        bestScore= bestScoreThisDepth;
+        depthReached= depth;
 
         auto currentTime= std::chrono::high_resolution_clock::now();
         int elapsedMs= std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
@@ -178,6 +313,7 @@ std::pair<core::Move, int> Bot::getBestMove(int timeLimitMs) {
             break; // Time limit reached
         }
     }
+    std::cout << "info" << " depth " << depthReached << " score cp " << bestScore << " time " << timeLimitMs << " nodes " << positionsEvaluated << std::endl;
     return {bestMove, bestScore};
 }
 } // namespace talawachess
