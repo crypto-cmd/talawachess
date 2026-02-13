@@ -94,7 +94,7 @@ class Bot {
   private:
     int quiesce(int alpha, int beta, int ply);
     int search(int depth, int ply, int alpha, int beta);
-    void orderMoves(std::vector<core::Move>& moves, const core::Move* ttMove, int ply) const;
+    void orderMoves(core::board::MoveList& moves, const core::Move* ttMove, int ply) const;
     std::string extractPV(const core::Move& bestMove, int depth);
 };
 

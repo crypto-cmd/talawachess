@@ -131,7 +131,7 @@ void Board::setFen(const std::string& fen) {
     for(int i= 0; i < 64; ++i) {
         Piece::Piece piece= squares[i];
         if(Piece::IsType(piece, Piece::KING)) {
-            Coordinate pos= Coordinate::FromIndex(i);
+            Coordinate pos= Coordinate(i);
             if(Piece::IsColor(piece, Piece::WHITE)) {
                 whiteKingPos= pos;
             } else {
@@ -273,6 +273,44 @@ void Board::makeMove(const Move& move) {
     else halfMoveClock++;
 
     if(activeColor == Piece::BLACK) fullMoveNumber++;
+    activeColor= (activeColor == Piece::WHITE) ? Piece::BLACK : Piece::WHITE;
+}
+
+void Board::makeNullMove() {
+    GameState state;
+    state.move= Move(); // Dummy move
+    state.capturedPiece= Piece::NONE;
+    state.castlingRights= castlingRights;
+    state.enPassantIndex= enPassantIndex;
+    state.halfMoveClock= halfMoveClock;
+    state.zobristHash= zobristHash;
+    state.whiteKingPos= whiteKingPos;
+    state.blackKingPos= blackKingPos;
+    game_history.push_back(state);
+
+    // Update en passant in hash
+    if(enPassantIndex != -1) zobristHash^= zEnPassant[enPassantIndex];
+    else zobristHash^= zEnPassant[64];
+    enPassantIndex= -1;
+    zobristHash^= zEnPassant[64];
+
+    // Toggle side to move
+    zobristHash^= zSide;
+    activeColor= (activeColor == Piece::WHITE) ? Piece::BLACK : Piece::WHITE;
+    halfMoveClock++;
+}
+
+void Board::undoNullMove() {
+    if(game_history.empty()) return;
+    GameState lastState= game_history.back();
+    game_history.pop_back();
+
+    castlingRights= lastState.castlingRights;
+    enPassantIndex= lastState.enPassantIndex;
+    halfMoveClock= lastState.halfMoveClock;
+    zobristHash= lastState.zobristHash;
+    whiteKingPos= lastState.whiteKingPos;
+    blackKingPos= lastState.blackKingPos;
     activeColor= (activeColor == Piece::WHITE) ? Piece::BLACK : Piece::WHITE;
 }
 

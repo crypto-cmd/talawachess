@@ -62,6 +62,8 @@ class Board {
     // Move Execution
     void makeMove(const Move& move);
     void undoMove();
+    void makeNullMove();
+    void undoNullMove();
 
     // Zobrist Helpers
     // Initializes the random keys (called once by constructor)

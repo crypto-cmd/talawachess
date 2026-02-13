@@ -9,15 +9,6 @@
 using namespace talawachess::core::board;
 using namespace talawachess::core;
 
-// --- Helper: Directions ---
-// We define these locally so we can use them in isSquareAttacked without relying on class members
-const std::vector<Coordinate> KNIGHT_DIRS= {
-    {-1, -2}, {1, -2}, {-2, -1}, {2, -1}, {-2, 1}, {2, 1}, {-1, 2}, {1, 2}};
-const std::vector<Coordinate> BISHOP_DIRS= {{-1, -1}, {1, -1}, {-1, 1}, {1, 1}};
-const std::vector<Coordinate> ROOK_DIRS= {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
-const std::vector<Coordinate> KING_DIRS= {
-    {-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1}};
-
 // --- Helper: Attack Detection ---
 // Returns true if 'square' is being attacked by 'attackerColor'
 bool MoveGenerator::isSquareAttacked(const Board& board, Coordinate square, Piece::Color attackerColor) {
@@ -89,61 +80,39 @@ bool MoveGenerator::isSquareAttacked(const Board& board, Coordinate square, Piec
     return false;
 }
 
-std::vector<Move>& MoveGenerator::generateMoves() {
-    _pseudomoves.clear();
+void MoveGenerator::generateMoves(MoveList& moveList) {
     for(int i= 0; i < 64; ++i) {
         auto piece= _board.squares[i];
         if(piece == Piece::NONE) continue;
-        Coordinate coord= Coordinate::FromIndex(i);
+        Coordinate coord= Coordinate(i);
         if(Piece::GetColor(piece) != _board.activeColor)
             continue; // Skip opponent's pieces
 
         Piece::PieceType type= Piece::GetPieceType(piece);
         switch(type) {
         case Piece::PAWN:
-            generatePawnMoves(_board, piece, coord, _pseudomoves);
+            generatePawnMoves(_board, piece, coord, moveList);
             break;
         case Piece::KNIGHT:
-            generateKnightMoves(_board, piece, coord, _pseudomoves);
+            generateKnightMoves(_board, piece, coord, moveList);
             break;
         case Piece::BISHOP:
-            generateSlidingMoves(_board, piece, coord, _pseudomoves, pieceDirections.at(Piece::BISHOP));
+            generateSlidingMoves(_board, piece, coord, moveList, BISHOP_DIRS);
             break;
         case Piece::ROOK:
-            generateSlidingMoves(_board, piece, coord, _pseudomoves, pieceDirections.at(Piece::ROOK));
+            generateSlidingMoves(_board, piece, coord, moveList, ROOK_DIRS);
             break;
         case Piece::QUEEN:
-            generateSlidingMoves(_board, piece, coord, _pseudomoves, pieceDirections.at(Piece::QUEEN));
+            generateSlidingMoves(_board, piece, coord, moveList, QUEEN_DIRS);
             break;
         case Piece::KING:
-            generateKingMoves(_board, piece, coord, _pseudomoves);
+            generateKingMoves(_board, piece, coord, moveList);
             break;
         }
     }
-    return _pseudomoves;
 }
 
-std::vector<Move>& MoveGenerator::generateLegalMoves() {
-    _moves.clear();
-    generateMoves(); // Auto fills _pseudomoves with all possible moves (including illegal ones)
-    for(const Move& move: _pseudomoves) {
-        _board.makeMove(move);
-
-        // Find our king:
-        Piece::Color myColor= (_board.activeColor == Piece::WHITE) ? Piece::BLACK : Piece::WHITE;
-        Coordinate myKingPos= (myColor == Piece::WHITE) ? _board.whiteKingPos : _board.blackKingPos;
-
-        if(!isSquareAttacked(_board, myKingPos, _board.activeColor)) {
-            _moves.push_back(move);
-        }
-
-        _board.undoMove();
-    }
-
-    return _moves;
-}
-
-void MoveGenerator::generatePawnMoves(const Board& board, Piece::Piece piece, Coordinate coord, std::vector<Move>& moves) {
+void MoveGenerator::generatePawnMoves(const Board& board, Piece::Piece piece, Coordinate coord, MoveList& moves) {
     auto direction= Piece::GetColor(piece) == Piece::WHITE ? Coordinate(0, 1) : Coordinate(0, -1);
     auto isStartingRank= (coord.rank == 1 && Piece::GetColor(piece) == Piece::WHITE) || (coord.rank == 6 && Piece::GetColor(piece) == Piece::BLACK);
 
@@ -214,8 +183,8 @@ void MoveGenerator::generatePawnMoves(const Board& board, Piece::Piece piece, Co
     }
 }
 
-void MoveGenerator::generateKnightMoves(const Board& board, Piece::Piece piece, Coordinate coord, std::vector<Move>& moves) {
-    for(const Coordinate& dir: pieceDirections.at(Piece::KNIGHT)) {
+void MoveGenerator::generateKnightMoves(const Board& board, Piece::Piece piece, Coordinate coord, MoveList& moves) {
+    for(const Coordinate& dir: KNIGHT_DIRS) {
         auto targetCoord= coord + dir;
         if(!targetCoord.IsValid())
             continue;
@@ -227,7 +196,7 @@ void MoveGenerator::generateKnightMoves(const Board& board, Piece::Piece piece, 
     }
 }
 
-void MoveGenerator::generateSlidingMoves(const Board& board, Piece::Piece piece, Coordinate coord, std::vector<Move>& moves, const std::vector<Coordinate>& directions) {
+void MoveGenerator::generateSlidingMoves(const Board& board, Piece::Piece piece, Coordinate coord, MoveList& moves, const std::vector<Coordinate>& directions) {
     for(const Coordinate& dir: directions) {
         auto targetCoord= coord + dir;
         while(targetCoord.IsValid()) {
@@ -245,8 +214,8 @@ void MoveGenerator::generateSlidingMoves(const Board& board, Piece::Piece piece,
     }
 }
 
-void MoveGenerator::generateKingMoves(const Board& board, Piece::Piece piece, Coordinate coord, std::vector<Move>& moves) {
-    for(const Coordinate& dir: pieceDirections.at(Piece::KING)) {
+void MoveGenerator::generateKingMoves(const Board& board, Piece::Piece piece, Coordinate coord, MoveList& moves) {
+    for(const Coordinate& dir: KING_DIRS) {
         auto targetCoord= coord + dir;
         if(!targetCoord.IsValid())
             continue;

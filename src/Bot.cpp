@@ -9,7 +9,7 @@ using namespace core;
 
 Bot::Bot(): _board(),
             _moveGen(_board) {
-    // Initialize Transposition Table (64 MB)
+    // Initialize Transposition Table with default size (e.g., 512 MB)
     resizeTT(512);
 }
 void Bot::resizeTT(size_t sizeInMB) {
@@ -61,16 +61,22 @@ void Bot::setFen(const std::string& fen) {
 }
 void Bot::performMove(const std::string& moveStr) {
     // Convert moveStr (e.g., "e2e4") to a Move object
-    auto& moves= _moveGen.generateLegalMoves();
+    MoveList moves;
+    _moveGen.generateMoves(moves);
     for(const auto& move: moves) {
         if(move.ToString() == moveStr) {
             _board.makeMove(move);
+
+            // Determine legality after making the move (e.g., not leaving king in check)
+            if(!MoveGenerator::IsLegalPosition(_board)) {
+                _board.undoMove(); // Illegal move, undo it
+            }
             return;
         }
     }
     throw std::invalid_argument("Invalid move string: " + moveStr);
 }
-void Bot::orderMoves(std::vector<core::Move>& moves, const core::Move* ttMove, int ply) const {
+void Bot::orderMoves(MoveList& moves, const core::Move* ttMove, int ply) const {
     using namespace bot;
     for(auto& move: moves) {
         move.score= 0;
@@ -125,6 +131,21 @@ int Bot::search(int depth, int ply, int alpha, int beta) {
         // Evaluate immediately to break the infinite loop
         return bot::evaluator::evaluate(_board); // Or call quiesce(alpha, beta, ply);
     }
+    // 4. CRITICAL: Draw Detection (Repetition & 50-Move Rule)
+    if(ply > 0) {
+        if(_board.halfMoveClock >= 100) return 0; // 50-move rule
+
+        // 1-Fold Repetition Detection
+        int limit= _board.game_history.size() - _board.halfMoveClock;
+        if(limit < 0) limit= 0;
+
+        // Step back by 2 to check positions where it was the same side's turn to move
+        for(int i= _board.game_history.size() - 2; i >= limit; i-= 2) {
+            if(_board.game_history[i].zobristHash == _board.zobristHash) {
+                return 0; // Instant cutoff: We are in a looping check sequence
+            }
+        }
+    }
 
     TTEntry& ttEntry= _tt[_board.zobristHash % _tt.size()];
     bool ttHit= (ttEntry.zobristHash == _board.zobristHash);
@@ -144,41 +165,80 @@ int Bot::search(int depth, int ply, int alpha, int beta) {
     }
 
     if(depth == 0) return quiesce(alpha, beta, ply);
-    auto moves= _moveGen.generateLegalMoves();
 
-    orderMoves(moves, ttBestMove, ply); // Move ordering for better alpha-beta performance
-    if(moves.empty()) {
-        // Check for checkmate or stalemate
-        auto attackerColor= _board.activeColor == Color::WHITE ? Color::BLACK : Color::WHITE;
-        auto kingPos= _board.activeColor == Color::WHITE ? _board.whiteKingPos : _board.blackKingPos;
-        if(MoveGenerator::isSquareAttacked(_board, kingPos, attackerColor)) {
-            checkMatesFound++;
-            return -MATE_VAL + ply; // Checkmate, prefer faster mates
-        } else {
-            return 0; // Stalemate
+    // Null Move Pruning
+    // Skip when: at root, in check, or beta is a mate score
+    if(depth >= 3 && ply > 0 && beta < MATE_VAL - 100 && beta > -MATE_VAL + 100) {
+        // Verify the side to move is not in check
+        Coordinate ourKingPos= (_board.activeColor == Color::WHITE) ? _board.whiteKingPos : _board.blackKingPos;
+        Color opponentColor= (_board.activeColor == Color::WHITE) ? Color::BLACK : Color::WHITE;
+        if(!MoveGenerator::isSquareAttacked(_board, ourKingPos, opponentColor)) {
+            int R= 2 + depth / 6;
+            _board.makeNullMove();
+            int nullScore= -search(depth - 1 - R, ply + 1, -beta, -beta + 1);
+            _board.undoNullMove();
+
+            if(_stopSearch) return 0;
+            if(nullScore >= beta) {
+                return beta;
+            }
         }
     }
 
+    MoveList moveList;
+    _moveGen.generateMoves(moveList);
+
+    orderMoves(moveList, ttBestMove, ply); // Move ordering for better alpha-beta performance
     int originalAlpha= alpha;
     core::Move bestMoveThisNode;
-    for(int i= 0; i < moves.size(); ++i) {
-        auto& move= moves[i];
+
+    Coordinate myKingPos= (_board.activeColor == Piece::WHITE) ? _board.whiteKingPos : _board.blackKingPos;
+    Piece::Color oppColor= (_board.activeColor == Piece::WHITE) ? Piece::BLACK : Piece::WHITE;
+    bool inCheck= MoveGenerator::isSquareAttacked(_board, myKingPos, oppColor);
+
+    int legalMoveCount= 0; // Count of legal moves for statistics
+    for(int i= 0; i < moveList.count; ++i) {
+        auto& move= moveList.moves[i];
+        auto side= _board.activeColor;
         _board.makeMove(move);
+
+        // Deferred Legality Check:
+        if(!MoveGenerator::IsLegalPosition(_board)) {
+            _board.undoMove(); // Illegal move, undo it
+            continue;          // Skip to next move
+        }
+        legalMoveCount++;
 
         // Check extension: if we give check, extend depth by 1
         int extension= 0;
         Coordinate oppKingPos= (_board.activeColor == Color::WHITE) ? _board.whiteKingPos : _board.blackKingPos;
         Color ourColor= (_board.activeColor == Color::WHITE) ? Color::BLACK : Color::WHITE;
         if(MoveGenerator::isSquareAttacked(_board, oppKingPos, ourColor)) {
-            extension= 1;
+            // POOR MAN'S SEE: Is the piece giving check sitting on a square attacked by the opponent?
+            // If the opponent can just capture the checking piece, it is a spite check. Do NOT extend.
+            if(!MoveGenerator::isSquareAttacked(_board, move.to, _board.activeColor)) {
+                extension= 1;
+            }
         }
 
         // Late Move Reduction:
-        int reduction= 0;
-        if(depth >= 3 && extension == 0 && move.captured == Piece::NONE && move.promotion == Piece::NONE) {
-            reduction= 1;            // Reduce quiet moves in deeper searches
-            if(i >= 6) reduction= 2; // Further reduce moves after the first few
+        bool isKiller= false;
+        if(ply >= 0 && ply < MAX_PLY) {
+            if(_killers[ply][0].from == move.from && _killers[ply][0].to == move.to) isKiller= true;
+            if(_killers[ply][1].from == move.from && _killers[ply][1].to == move.to) isKiller= true;
         }
+
+        int reduction= 0;
+        if(depth >= 3 && i >= 3 && !inCheck && !isKiller && extension == 0 && move.captured == Piece::NONE && move.promotion == Piece::NONE) {
+            // Base reduction of 1, plus scaling based on depth and move index
+            reduction= 1 + (depth / 4) + (i / 8);
+
+            // Safety cap: Never reduce the depth to 0 or below, always search at least depth 1
+            if(reduction >= depth) {
+                reduction= depth - 1;
+            }
+        }
+
         int evaluation= -search(depth - 1 + extension - reduction, ply + 1, -beta, -alpha);
 
         // If we reduced and the move looks better than alpha, research at full depth (Late Move Reduction with Research)
@@ -196,11 +256,13 @@ int Bot::search(int depth, int ply, int alpha, int beta) {
             if(storedScore > MATE_VAL - 100) storedScore+= ply;
             else if(storedScore < -MATE_VAL + 100) storedScore-= ply;
 
-            ttEntry.zobristHash= _board.zobristHash;
-            ttEntry.bestMove= move; // Store a copy of the move
-            ttEntry.score= storedScore;
-            ttEntry.depth= depth;
-            ttEntry.flag= TT_BETA;
+            if(ttEntry.zobristHash != _board.zobristHash || depth >= ttEntry.depth) {
+                ttEntry.zobristHash= _board.zobristHash;
+                ttEntry.bestMove= move;
+                ttEntry.score= storedScore;
+                ttEntry.depth= depth;
+                ttEntry.flag= TT_BETA;
+            }
             return beta; // Fail hard beta cutoff
         }
         if(evaluation > alpha) {
@@ -208,27 +270,11 @@ int Bot::search(int depth, int ply, int alpha, int beta) {
             bestMoveThisNode= move;
         }
     }
-    int storedScore= alpha;
-    if(storedScore > MATE_VAL - 100) storedScore+= ply;
-    else if(storedScore < -MATE_VAL + 100) storedScore-= ply;
 
-    ttEntry.zobristHash= _board.zobristHash;
-    ttEntry.bestMove= bestMoveThisNode; // Store a copy of the move
-    ttEntry.score= storedScore;
-    ttEntry.depth= depth;
-    ttEntry.flag= (alpha > originalAlpha) ? TT_EXACT : TT_ALPHA;
-
-    return alpha;
-}
-
-int Bot::quiesce(int alpha, int beta, int ply) {
-    // Generate legal moves to check for checkmate/stalemate
-    auto moves= _moveGen.generateLegalMoves();
-
-    // Check for checkmate or stalemate
-    if(moves.empty()) {
-        auto attackerColor= _board.activeColor == Piece::WHITE ? Piece::BLACK : Piece::WHITE;
-        auto kingPos= _board.activeColor == Piece::WHITE ? _board.whiteKingPos : _board.blackKingPos;
+    if(legalMoveCount == 0) {
+        // No legal moves found (all moves were illegal due to checks)
+        auto attackerColor= _board.activeColor == Color::WHITE ? Color::BLACK : Color::WHITE;
+        auto kingPos= _board.activeColor == Color::WHITE ? _board.whiteKingPos : _board.blackKingPos;
         if(MoveGenerator::isSquareAttacked(_board, kingPos, attackerColor)) {
             checkMatesFound++;
             return -MATE_VAL + ply; // Checkmate, prefer faster mates
@@ -236,6 +282,33 @@ int Bot::quiesce(int alpha, int beta, int ply) {
             return 0; // Stalemate
         }
     }
+    int storedScore= alpha;
+    if(storedScore > MATE_VAL - 100) storedScore+= ply;
+    else if(storedScore < -MATE_VAL + 100) storedScore-= ply;
+
+    if(ttEntry.zobristHash != _board.zobristHash || depth >= ttEntry.depth) {
+
+        // CRITICAL: Preserve the old best move if we failed low (Alpha node)
+        if(alpha > originalAlpha) {
+            ttEntry.bestMove= bestMoveThisNode; // Exact node: we found a new best move
+        } else if(ttEntry.zobristHash != _board.zobristHash) {
+            ttEntry.bestMove= core::Move(); // New position: clear the move
+        }
+        // If it was the same position but failed low, we leave ttEntry.bestMove untouched!
+
+        ttEntry.zobristHash= _board.zobristHash;
+        ttEntry.score= storedScore;
+        ttEntry.depth= depth;
+        ttEntry.flag= (alpha > originalAlpha) ? TT_EXACT : TT_ALPHA;
+    }
+
+    return alpha;
+}
+
+int Bot::quiesce(int alpha, int beta, int ply) {
+    // Generate legal moves to check for checkmate/stalemate
+    MoveList moves;
+    _moveGen.generateMoves(moves);
 
     // 1. Stand Pat: Assumes we can just "stop" and not capture anything if our position is good
     int stand_pat= bot::evaluator::evaluate(_board);
@@ -246,16 +319,36 @@ int Bot::quiesce(int alpha, int beta, int ply) {
     // 2. Search only Captures and Promotions
     orderMoves(moves, nullptr, -1); // Order captures by MVV-LVA, no killers in quiescence
 
+    int legalMoveCount= 0; // Count of legal moves for statistics
     for(const auto& move: moves) {
         // FILTER: Only look at Captures and Promotions
         if(move.captured == core::Piece::NONE && move.promotion == core::Piece::NONE) continue;
 
+        auto side= _board.activeColor;
         _board.makeMove(move);
+
+        // Deferred Legality Check:
+        if(!MoveGenerator::IsLegalPosition(_board)) {
+            _board.undoMove(); // Illegal move, undo it
+            continue;          // Skip to next move
+        }
+        legalMoveCount++;
         int score= -quiesce(-beta, -alpha, ply + 1);
         _board.undoMove();
 
         if(score >= beta) return beta;
         if(score > alpha) alpha= score;
+    }
+    if(legalMoveCount == 0) {
+        // No legal moves found (all moves were illegal due to checks)
+        auto attackerColor= _board.activeColor == Color::WHITE ? Color::BLACK : Color::WHITE;
+        auto kingPos= _board.activeColor == Color::WHITE ? _board.whiteKingPos : _board.blackKingPos;
+        if(MoveGenerator::isSquareAttacked(_board, kingPos, attackerColor)) {
+            checkMatesFound++;
+            return -MATE_VAL + ply; // Checkmate, prefer faster mates
+        } else {
+            return 0; // Stalemate
+        }
     }
     return alpha;
 }
@@ -275,9 +368,8 @@ std::pair<core::Move, int> Bot::getBestMove(int timeLimitMs, int maxDepth) {
     int depthReached= 0;
 
     for(int depth= 1; depth <= depthLimit; ++depth) { // Iterative deepening
-
-        auto moves= _moveGen.generateLegalMoves();
-        if(moves.empty()) break; // No moves available
+        MoveList moves;
+        _moveGen.generateMoves(moves);
 
         TTEntry& ttEntry= _tt[_board.zobristHash % _tt.size()];
         core::Move* ttMove= (ttEntry.zobristHash == _board.zobristHash) ? &ttEntry.bestMove : nullptr;
@@ -287,9 +379,16 @@ std::pair<core::Move, int> Bot::getBestMove(int timeLimitMs, int maxDepth) {
         core::Move bestMoveThisDepth;
         int bestScoreThisDepth= -INF;
         int alpha= -INF;
-
+        int legalMoveCount= 0; // Count of legal moves for statistics
         for(const auto& move: moves) {
             _board.makeMove(move);
+
+            // Deferred Legality Check:
+            if(!MoveGenerator::IsLegalPosition(_board)) {
+                _board.undoMove(); // Illegal move, undo it
+                continue;          // Skip to next move
+            }
+            legalMoveCount++;
             int score= -search(depth - 1, 1, -INF, -alpha);
             _board.undoMove();
 
@@ -302,6 +401,13 @@ std::pair<core::Move, int> Bot::getBestMove(int timeLimitMs, int maxDepth) {
             if(score > alpha) {
                 alpha= score;
             }
+        }
+
+        if(legalMoveCount == 0) {
+
+            // We are at the root and found no legal moves - this means the position is either checkmate or stalemate and we should return and say error because there is no best move
+            std::cout << "info" << " depth " << depth << " score " << "cp 0" << " time " << getElapsedTimeMs() << " nodes " << positionsEvaluated << " nps 0 pv" << std::endl;
+            return {core::Move(), 0};
         }
 
         if(_stopSearch) break; // If we were signaled to stop during the search, break out of depth loop
@@ -355,15 +461,11 @@ std::string Bot::extractPV(const core::Move& bestMove, int depth) {
         if(move.from == move.to) break; // Invalid move
 
         // Verify move is legal
-        auto legalMoves= _moveGen.generateLegalMoves();
-        bool isLegal= false;
-        for(const auto& lm: legalMoves) {
-            if(lm.from == move.from && lm.to == move.to && lm.promotion == move.promotion) {
-                isLegal= true;
-                break;
-            }
+        auto attackerColor= _board.activeColor == core::Piece::WHITE ? core::Piece::BLACK : core::Piece::WHITE;
+        auto kingPos= _board.activeColor == core::Piece::WHITE ? _board.whiteKingPos : _board.blackKingPos;
+        if(MoveGenerator::isSquareAttacked(_board, kingPos, attackerColor)) {
+            break; // Current position is in check, so any move in TT is suspect, break PV extraction
         }
-        if(!isLegal) break;
 
         pv+= " " + move.ToString();
         _board.makeMove(move);
