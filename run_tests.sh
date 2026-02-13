@@ -35,7 +35,7 @@ while IFS='|' read -r fen expected_move_raw; do
 
     # 2. Prepare Engine Input
     # We ask the engine to go, then quit.
-    input="position fen $fen\ngo wtime 60000 btime 200000 winc 0 binc 0 \nquit\n"
+    input="position fen $fen\ngo movetime 10000 \nquit\n"
 
     # 3. Run Engine and Capture Output + Time
     # We use date +%s%N to get nanoseconds for precision

@@ -4,6 +4,15 @@ project(talawachess)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Threading support
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+
+# Force static linking when cross-compiling with MinGW
+if(MINGW)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
+endif()
+
 # OPTIMIZATION FLAGS
 if(MSVC)
     add_compile_options(/O2)
@@ -20,4 +29,5 @@ include_directories(include)
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 
 # Create the executable using the discovered list
-add_executable(talawachess.exe ${SOURCES})
+add_executable(talawachess ${SOURCES})
+target_link_libraries(talawachess PRIVATE Threads::Threads)

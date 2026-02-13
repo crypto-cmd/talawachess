@@ -3,21 +3,22 @@
 #include "Coordinate.hpp"
 #include "Move.hpp"
 #include "Piece.hpp"
+#include <array>
 #include <iostream>
 #include <string>
-#include <utility> // for std::pair
 #include <vector>
 
 namespace talawachess::core::board {
 
 // Struct to save the state of the game before a move is made
 struct GameState {
-    std::vector<Piece::Piece> squares;
-    std::vector<std::pair<Piece::Piece, Coordinate>> pieces; // Saved piece list
+    Piece::Piece capturedPiece; // The piece that was captured (if any)
     uint8_t castlingRights;
     int enPassantIndex;
     int halfMoveClock;
     uint64_t zobristHash; // Saved hash
+
+    Move move; // The move that was made to reach this state
 
     Coordinate whiteKingPos; // Saved white king position
     Coordinate blackKingPos; // Saved black king position
@@ -29,10 +30,7 @@ class Board {
     static constexpr const char* STARTING_POS= "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
     // The board representation (Mailbox)
-    std::vector<Piece::Piece> squares;
-
-    // Incremental piece list: Tracks where every piece is to avoid O(64) loops
-    std::vector<std::pair<Piece::Piece, Coordinate>> pieces;
+    Piece::Piece squares[64];
 
     // History stack for undoing moves
     std::vector<GameState> game_history;
@@ -70,8 +68,6 @@ class Board {
     static void initZobrist();
     // Calculates the hash from scratch (slow, used for verification/initialization)
     uint64_t calculateHash() const;
-
-    bool isKingInCheck( Piece::Color kingColor) const;
 };
 
 } // namespace talawachess::core::board

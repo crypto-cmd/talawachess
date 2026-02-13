@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Board.hpp"
+#include <vector>
 namespace talawachess::core::board {
 class MoveGenerator {
   private:

@@ -91,7 +91,10 @@ bool MoveGenerator::isSquareAttacked(const Board& board, Coordinate square, Piec
 
 std::vector<Move>& MoveGenerator::generateMoves() {
     _pseudomoves.clear();
-    for(auto& [piece, coord]: _board.pieces) {
+    for(int i= 0; i < 64; ++i) {
+        auto piece= _board.squares[i];
+        if(piece == Piece::NONE) continue;
+        Coordinate coord= Coordinate::FromIndex(i);
         if(Piece::GetColor(piece) != _board.activeColor)
             continue; // Skip opponent's pieces
 
@@ -195,14 +198,17 @@ void MoveGenerator::generatePawnMoves(const Board& board, Piece::Piece piece, Co
         if(Piece::GetColor(targetPiece) == Piece::GetColor(piece) || Piece::GetPieceType(targetPiece) != Piece::PAWN) continue;
         if(board.game_history.empty()) continue;
 
-        const auto& lastMove= board.game_history.back();
+        const auto& lastState= board.game_history.back();
+        const auto& lastMove= lastState.move;
         const auto behindEnemyPawn= besideMe + direction;
 
         if(!behindEnemyPawn.IsValid()) continue;
 
-        const auto squares= lastMove.squares;
-        if(squares[behindEnemyPawn.ToIndex()] == Piece::NONE && squares[besideMe.ToIndex()] == Piece::NONE) {
-
+        // Check if the last move was a double pawn push to the square beside us
+        bool wasDoublePush= (lastMove.to == besideMe) &&
+                            Piece::IsType(lastMove.movedPiece, Piece::PAWN) &&
+                            std::abs(lastMove.to.rank - lastMove.from.rank) == 2;
+        if(wasDoublePush) {
             moves.push_back(Move{coord, behindEnemyPawn, Piece::NONE, targetPiece, piece});
         }
     }

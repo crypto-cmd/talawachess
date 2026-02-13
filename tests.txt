@@ -6,9 +6,21 @@
 # Complex Mate in 3
 8/5pk1/1p2p3/1N2N3/PP1Pn1P1/R3P1nP/6K1/2r5 b - - 4 41 | c1c2
 
-# Complex Mate in 4
+# Complex Mate in 4 (PART1)
 r3k3/2p1bpp1/p1nqp1p1/1p6/6nB/P1NP3P/BPP2PP1/R2QR1K1 b q - 0 15 | d6h2
+
+# (PART 2)
+r3k3/2p1bpp1/p1n1p1p1/1p6/6nB/P1NP3P/BPP2PPq/R2QRK2 b q - 2 16 | c6d4
+
+# (PART 3)
+r3k3/2p1bpp1/p3p1p1/1p6/3n2nB/P2P3P/BPP1NPPq/R2QRK2 b q - 4 17 | h2h1
 
 # Queen Sac Mate in 4
 r4b1k/1b3qNp/p5pP/2r1pN2/4P3/2pB1Q2/P1P5/KR4R1 b - - 1 29 | f7a2
+
+# Random Puzzle
+4rr2/pp1R1Npk/7p/q7/2B2Q2/8/PP3PPP/6K1 b - - 4 28 b - - 1 29 | e8e1
+
+#Simple Sac
+1r4k1/qp1r1p2/2pNb1p1/p3b1P1/4P1n1/B4QN1/P3B1P1/1R3R1K w - - 6 25 | d6f5
 # End of File

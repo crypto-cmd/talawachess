@@ -1,6 +1,7 @@
 #include "Board.hpp"
 #include "Bot.hpp"
 #include <string>
+#include <thread>
 namespace talawachess {
 class UCI {
   private:

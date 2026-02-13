@@ -36,12 +36,13 @@ static int getPieceIndex(Piece::Piece p) {
 // BOARD IMPLEMENTATION
 // -----------------------------------------------------------------------------
 
-Board::Board(): squares(64, Piece::NONE) {
+Board::Board() {
     static bool initialized= false;
     if(!initialized) {
         initZobrist();
         initialized= true;
     }
+    game_history.reserve(512);
     setFen(STARTING_POS);
 }
 
@@ -75,8 +76,7 @@ uint64_t Board::calculateHash() const {
 }
 
 void Board::setFen(const std::string& fen) {
-    std::fill(squares.begin(), squares.end(), Piece::NONE);
-    pieces.clear();
+    std::fill(std::begin(squares), std::end(squares), Piece::NONE);
     game_history.clear();
 
     std::stringstream ss(fen);
@@ -97,7 +97,6 @@ void Board::setFen(const std::string& fen) {
             int squareIndex= coord.ToIndex();
             Piece::Piece piece= Piece::FromSymbol(c);
             squares[squareIndex]= piece;
-            pieces.push_back({piece, coord});
             coord= Coordinate(coord.file + 1, coord.rank);
         }
     }
@@ -129,8 +128,10 @@ void Board::setFen(const std::string& fen) {
     }
 
     // Find Kings' positions
-    for(const auto& [piece, pos]: pieces) {
+    for(int i= 0; i < 64; ++i) {
+        Piece::Piece piece= squares[i];
         if(Piece::IsType(piece, Piece::KING)) {
+            Coordinate pos= Coordinate::FromIndex(i);
             if(Piece::IsColor(piece, Piece::WHITE)) {
                 whiteKingPos= pos;
             } else {
@@ -145,14 +146,15 @@ void Board::setFen(const std::string& fen) {
 void Board::makeMove(const Move& move) {
     // 1. Save History
     GameState state;
-    state.squares= squares;
-    state.pieces= pieces;
+    state.move= move;
+    state.capturedPiece= move.captured;
     state.castlingRights= castlingRights;
     state.enPassantIndex= enPassantIndex;
     state.halfMoveClock= halfMoveClock;
     state.zobristHash= zobristHash;
     state.whiteKingPos= whiteKingPos;
     state.blackKingPos= blackKingPos;
+
     game_history.push_back(state);
 
     int fromIdx= move.from.ToIndex();
@@ -177,38 +179,21 @@ void Board::makeMove(const Move& move) {
     squares[toIdx]= movingPiece;
     squares[fromIdx]= Piece::NONE;
 
-    // ---------------------------------------------------------
-    // 4. INCREMENTAL PIECE LIST UPDATE
-    // ---------------------------------------------------------
-
-    // A. Handle Captures FIRST (Remove from list)
-    // We must do this BEFORE moving the attacker, so we don't accidentally remove the attacker
-    // if they end up on the same square index during the update.
-    if(move.captured != Piece::NONE) {
-        Coordinate capturePos= move.to;
-        if(isEnPassant) {
-            capturePos= Coordinate(move.to.file, move.from.rank);
-        }
-
-        // Swap-and-Pop removal
-        for(size_t i= 0; i < pieces.size(); ++i) {
-            if(pieces[i].second == capturePos) {
-                pieces[i]= pieces.back();
-                pieces.pop_back();
-                break;
-            }
-        }
+    if(Piece::GetPieceType(move.movedPiece) == Piece::KING) {
+        if(activeColor == Piece::WHITE) whiteKingPos= move.to;
+        else blackKingPos= move.to;
     }
 
-    // B. Update Moving Piece coordinates SECOND
-    for(auto& p: pieces) {
-        if(p.second == move.from) {
-            p.second= move.to;
-            if(move.promotion != Piece::NONE) {
-                p.first= move.promotion;
-            }
-            break;
+    // 4. Handle Captures
+    if(move.captured != Piece::NONE) {
+        int capIdx= toIdx;
+        if(isEnPassant) {
+            // En passant: captured pawn is on a different square
+            Coordinate capturePos= Coordinate(move.to.file, move.from.rank);
+            capIdx= capturePos.ToIndex();
+            squares[capIdx]= Piece::NONE;
         }
+        zobristHash^= zPiece[getPieceIndex(move.captured)][capIdx];
     }
 
     // Update Kings' positions if needed
@@ -241,14 +226,6 @@ void Board::makeMove(const Move& move) {
         Piece::Piece rook= squares[rookFromIdx];
         squares[rookToIdx]= rook;
         squares[rookFromIdx]= Piece::NONE;
-
-        // Update Rook in List
-        for(auto& p: pieces) {
-            if(p.second == rookFromCoord) {
-                p.second= rookToCoord;
-                break;
-            }
-        }
 
         zobristHash^= zPiece[getPieceIndex(rook)][rookFromIdx];
         zobristHash^= zPiece[getPieceIndex(rook)][rookToIdx];
@@ -305,8 +282,42 @@ void Board::undoMove() {
     GameState lastState= game_history.back();
     game_history.pop_back();
 
-    squares= lastState.squares;
-    pieces= lastState.pieces;
+    castlingRights= lastState.castlingRights;
+    enPassantIndex= lastState.enPassantIndex;
+    halfMoveClock= lastState.halfMoveClock;
+    zobristHash= lastState.zobristHash;
+    whiteKingPos= lastState.whiteKingPos;
+    blackKingPos= lastState.blackKingPos;
+
+    // Restore the move
+    const Move& move= lastState.move;
+    squares[move.from.ToIndex()]= move.movedPiece;       // Use original piece (important for promotions!)
+    squares[move.to.ToIndex()]= lastState.capturedPiece; // Normal Capture undo
+
+    // Handle EnPassant Undo - must check that a capture actually occurred
+    if(move.captured != Piece::NONE && lastState.enPassantIndex != -1 && Piece::GetPieceType(move.movedPiece) == Piece::PAWN && move.to.ToIndex() == lastState.enPassantIndex) {
+        squares[move.to.ToIndex()]= Piece::NONE; // En passant target square was empty
+        int capIdx= (activeColor == Piece::WHITE) ? (lastState.enPassantIndex + 8) : (lastState.enPassantIndex - 8);
+        squares[capIdx]= move.captured; // Restore captured pawn at its original position
+    }
+
+    // Handle Castling Undo
+    auto diff= move.to.file - move.from.file;
+    if(Piece::GetPieceType(move.movedPiece) == Piece::KING && std::abs(diff) == 2) {
+        if(diff > 0) { // King-side
+            int rookFromIdx= move.from.ToIndex() + 3;
+            int rookToIdx= move.from.ToIndex() + 1;
+            squares[rookFromIdx]= squares[rookToIdx];
+            squares[rookToIdx]= Piece::NONE;
+        } else { // Queen-side
+            int rookFromIdx= move.from.ToIndex() - 4;
+            int rookToIdx= move.from.ToIndex() - 1;
+            squares[rookFromIdx]= squares[rookToIdx];
+            squares[rookToIdx]= Piece::NONE;
+        }
+    }
+
+    // Restore state variables
     castlingRights= lastState.castlingRights;
     enPassantIndex= lastState.enPassantIndex;
     halfMoveClock= lastState.halfMoveClock;

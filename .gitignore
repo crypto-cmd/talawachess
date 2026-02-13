@@ -1,1 +1,4 @@
 build
+build_win
+.vs
+build_win.sh

@@ -1,84 +1,26 @@
 #include "Bot.hpp"
 #include "Board.hpp"
+#include "Evaluator.hpp"
 #include <chrono>
 namespace talawachess {
 using namespace core::board;
 using namespace core::Piece;
 using namespace core;
-const int Bot::PieceValues[7]= {0, 100, 300, 350, 500, 900, 20000}; // NONE, PAWN, KNIGHT, BISHOP, ROOK, QUEEN, KING
-std::array<std::array<int, 64>, 7> Bot::PieceSquareTables= {{{0}}}; // Initialize all PSTs to 0
 
 Bot::Bot(): _board(),
             _moveGen(_board) {
     // Initialize Transposition Table (64 MB)
     resizeTT(512);
-    // Initialize pawn piece-square table
-    PieceSquareTables[core::Piece::PAWN]=
-        {0, 0, 0, 0, 0, 0, 0, 0,
-         78, 83, 86, 73, 102, 82, 85, 90,
-         7, 29, 21, 44, 40, 31, 44, 7,
-         -17, 16, -2, 15, 14, 0, 15, -13,
-         -26, 3, 10, 9, 6, 1, 0, -23,
-         -22, 9, 5, -11, -10, -2, 3, -19,
-         -31, 8, -7, -37, -36, -14, 3, -31,
-         0, 0, 0, 0, 0, 0, 0, 0};
-    PieceSquareTables[core::Piece::KNIGHT]=
-        {-66, -53, -75, -75, -10, -55, -58, -70,
-         -3, -6, 100, -36, 4, 62, -4, -14,
-         10, 67, 1, 74, 73, 27, 62, -2,
-         24, 24, 45, 37, 33, 41, 25, 17,
-         -1, 5, 31, 21, 22, 35, 2, 0,
-         -18, 10, 13, 22, 18, 15, 11, -14,
-         -23, -15, 2, 0, 2, 0, -23, -20,
-         -74, -23, -26, -24, -19, -35, -22, -69};
-    PieceSquareTables[core::Piece::BISHOP]=
-        {-59, -78, -82, -76, -23, -107, -37, -50,
-         -11, 20, 35, -42, -39, 31, 2, -22,
-         -9, 39, -32, 41, 52, -10, 28, -14,
-         25, 17, 20, 34, 26, 25, 15, 10,
-         13, 10, 17, 23, 17, 16, 0, 7,
-         14, 25, 24, 15, 8, 25, 20, 15,
-         19, 20, 11, 6, 7, 6, 20, 16,
-         -7, 2, -15, -12, -14, -15, -10, -10};
-    PieceSquareTables[core::Piece::ROOK]=
-        {35, 29, 33, 4, 37, 33, 56, 50,
-         55, 29, 56, 67, 55, 62, 34, 60,
-         19, 35, 28, 33, 45, 27, 25, 15,
-         0, 5, 16, 13, 18, -4, -9, -6,
-         -28, -35, -16, -21, -13, -29, -46, -30,
-         -42, -28, -42, -25, -25, -35, -26, -46,
-         -53, -38, -31, -26, -29, -43, -44, -53,
-         -30, -24, -18, 5, -2, -18, -31, -32};
-    PieceSquareTables[core::Piece::QUEEN]=
-        {6, 1, -8, -104, 69, 24, 88, 26,
-         14, 32, 60, -10, 20, 76, 57, 24,
-         -2, 43, 32, 60, 72, 63, 43, 2,
-         1, -16, 22, 17, 25, 20, -13, -6,
-         -14, -15, -2, -5, -1, -10, -20, -22,
-         -30, -6, -13, -11, -16, -11, -16, -27,
-         -36, -18, 0, -19, -15, -15, -21, -38,
-         -39, -30, -31, -13, -31, -36, -34, -42};
-    PieceSquareTables[core::Piece::KING]=
-        {4, 54, 47, -99, -99, 60, 83, -62,
-         -32, 10, 55, 56, 56, 55, 10, 3,
-         -62, 12, -57, 44, -67, 28, 37, -31,
-         -55, 50, 11, -4, -19, 13, 0, -49,
-         -55, -43, -52, -28, -51, -47, -8, -50,
-         -47, -42, -43, -79, -64, -32, -29, -32,
-         -4, 3, -14, -50, -57, -18, 13, 4,
-         17, 30, -3, -14, 6, -1, 40, 18};
 }
 void Bot::resizeTT(size_t sizeInMB) {
     // Clear old entries and free their moves first
-    for(auto& entry: _tt) {
-        delete entry.bestMove;
-    }
+
     size_t numEntries= (sizeInMB * 1024 * 1024) / sizeof(TTEntry);
     _tt.clear();
     _tt.resize(numEntries);
     // Initialize all entries properly
     for(auto& entry: _tt) {
-        entry.bestMove= nullptr;
+        entry.bestMove= core::Move(); // Initialize to default move
         entry.zobristHash= 0;
         entry.depth= -1;
         entry.flag= TT_EXACT;
@@ -88,13 +30,31 @@ void Bot::resizeTT(size_t sizeInMB) {
 
 void Bot::clearTT() {
     for(auto& entry: _tt) {
-        delete entry.bestMove; // Free any existing move
-        entry.bestMove= nullptr;
+        entry.bestMove= core::Move(); // Initialize to default move
         entry.zobristHash= 0;
         entry.depth= -1;
         entry.flag= TT_EXACT;
         entry.score= -INF;
     }
+}
+
+void Bot::clearKillers() {
+    for(int i= 0; i < MAX_PLY; ++i) {
+        _killers[i][0]= core::Move();
+        _killers[i][1]= core::Move();
+    }
+}
+
+void Bot::updateKillers(const core::Move& move, int ply) {
+    if(ply >= MAX_PLY) return;
+    // Don't store captures or promotions as killers (they're already ordered high)
+    if(move.captured != core::Piece::NONE) return;
+    if(move.promotion != core::Piece::NONE) return;
+    // Don't store if it's already the first killer
+    if(_killers[ply][0].from == move.from && _killers[ply][0].to == move.to) return;
+    // Shift killer 0 to killer 1, store new killer in slot 0
+    _killers[ply][1]= _killers[ply][0];
+    _killers[ply][0]= move;
 }
 void Bot::setFen(const std::string& fen) {
     _board.setFen(fen);
@@ -110,7 +70,8 @@ void Bot::performMove(const std::string& moveStr) {
     }
     throw std::invalid_argument("Invalid move string: " + moveStr);
 }
-void Bot::orderMoves(std::vector<core::Move>& moves, const core::Move* ttMove) const {
+void Bot::orderMoves(std::vector<core::Move>& moves, const core::Move* ttMove, int ply) const {
+    using namespace bot;
     for(auto& move: moves) {
         move.score= 0;
         // 1. Prioritize Transposition Table Move
@@ -118,18 +79,26 @@ void Bot::orderMoves(std::vector<core::Move>& moves, const core::Move* ttMove) c
             move.score= 2000000; // Highest priority
             continue;
         }
-        // 2. Prioritize Captures using MVV-LVA
+        // 2. Prioritize Captures using MVV-LVA (1,000,000 - 1,900,000)
         if(move.captured != core::Piece::NONE) {
-            // (Victim Value * 10) - Attacker Value
-            // e.g., P takes Q = 9000 - 100 = 8900
-            // e.g., Q takes P = 1000 - 900 = 100
-            move.score= 10000 + (PieceValues[move.captured] * 10) - (PieceValues[move.movedPiece]);
+            int victimType= core::Piece::GetPieceType(move.captured);
+            int attackerType= core::Piece::GetPieceType(move.movedPiece);
+            // MVV-LVA: higher victim value and lower attacker value = better
+            move.score= 1000000 + (evaluator::PieceValues[victimType] * 100) - evaluator::PieceValues[attackerType];
         }
-        // 3. Prioritize Promotions
+        // 3. Prioritize Promotions (also tactical, score in capture range)
         else if(move.promotion != core::Piece::NONE) {
-            move.score= 9000 + PieceValues[move.promotion];
-        } else {
-            move.score= 0;
+            int promoType= core::Piece::GetPieceType(move.promotion);
+            move.score= 1000000 + evaluator::PieceValues[promoType];
+        }
+        // 4. Killer Moves (quiet moves that caused cutoffs at this ply)
+        // Only apply in main search (ply >= 0), not in quiescence (ply = -1)
+        else if(ply >= 0 && ply < MAX_PLY) {
+            if(_killers[ply][0].from == move.from && _killers[ply][0].to == move.to) {
+                move.score= 900000; // First killer - below all captures
+            } else if(_killers[ply][1].from == move.from && _killers[ply][1].to == move.to) {
+                move.score= 800000; // Second killer
+            }
         }
     }
 
@@ -142,11 +111,26 @@ int Bot::search(int depth, int ply, int alpha, int beta) {
     using namespace talawachess::core::Piece;
     using namespace talawachess::core::board;
 
+    // 1. Check for time limit every 512 nodes (more responsive to stop command)
+    if((positionsEvaluated & 511) == 0) {
+        checkTime();
+    }
+
+    // 2. Don't search if we've been signaled to stop
+    if(_stopSearch) return 0;
+
+    // 3. Prevent search explosions
+    const int MAX_PLY= 100; // Define a safe maximum depth
+    if(ply >= MAX_PLY) {
+        // Evaluate immediately to break the infinite loop
+        return bot::evaluator::evaluate(_board); // Or call quiesce(alpha, beta, ply);
+    }
+
     TTEntry& ttEntry= _tt[_board.zobristHash % _tt.size()];
     bool ttHit= (ttEntry.zobristHash == _board.zobristHash);
     core::Move* ttBestMove= nullptr;
     if(ttHit) {
-        ttBestMove= ttEntry.bestMove;
+        ttBestMove= &ttEntry.bestMove;
         if(ttEntry.depth >= depth) {
             int score= ttEntry.score;
 
@@ -162,7 +146,7 @@ int Bot::search(int depth, int ply, int alpha, int beta) {
     if(depth == 0) return quiesce(alpha, beta, ply);
     auto moves= _moveGen.generateLegalMoves();
 
-    orderMoves(moves, ttBestMove); // Move ordering for better alpha-beta performance
+    orderMoves(moves, ttBestMove, ply); // Move ordering for better alpha-beta performance
     if(moves.empty()) {
         // Check for checkmate or stalemate
         auto attackerColor= _board.activeColor == Color::WHITE ? Color::BLACK : Color::WHITE;
@@ -177,18 +161,43 @@ int Bot::search(int depth, int ply, int alpha, int beta) {
 
     int originalAlpha= alpha;
     core::Move bestMoveThisNode;
-    for(const auto& move: moves) {
+    for(int i= 0; i < moves.size(); ++i) {
+        auto& move= moves[i];
         _board.makeMove(move);
-        int evaluation= -search(depth - 1, ply + 1, -beta, -alpha);
+
+        // Check extension: if we give check, extend depth by 1
+        int extension= 0;
+        Coordinate oppKingPos= (_board.activeColor == Color::WHITE) ? _board.whiteKingPos : _board.blackKingPos;
+        Color ourColor= (_board.activeColor == Color::WHITE) ? Color::BLACK : Color::WHITE;
+        if(MoveGenerator::isSquareAttacked(_board, oppKingPos, ourColor)) {
+            extension= 1;
+        }
+
+        // Late Move Reduction:
+        int reduction= 0;
+        if(depth >= 3 && extension == 0 && move.captured == Piece::NONE && move.promotion == Piece::NONE) {
+            reduction= 1;            // Reduce quiet moves in deeper searches
+            if(i >= 6) reduction= 2; // Further reduce moves after the first few
+        }
+        int evaluation= -search(depth - 1 + extension - reduction, ply + 1, -beta, -alpha);
+
+        // If we reduced and the move looks better than alpha, research at full depth (Late Move Reduction with Research)
+        if(evaluation > alpha && reduction > 0) {
+            evaluation= -search(depth - 1 + extension, ply + 1, -beta, -alpha);
+        }
         _board.undoMove();
+
+        if(_stopSearch) return 0; // If we were signaled to stop during the search, return immediately
         if(evaluation >= beta) {
+            // Update killer moves for quiet moves that cause beta cutoff
+            updateKillers(move, ply);
+
             int storedScore= evaluation;
             if(storedScore > MATE_VAL - 100) storedScore+= ply;
             else if(storedScore < -MATE_VAL + 100) storedScore-= ply;
 
             ttEntry.zobristHash= _board.zobristHash;
-            delete ttEntry.bestMove;                // Free old move before overwriting
-            ttEntry.bestMove= new core::Move(move); // Store a copy of the move
+            ttEntry.bestMove= move; // Store a copy of the move
             ttEntry.score= storedScore;
             ttEntry.depth= depth;
             ttEntry.flag= TT_BETA;
@@ -204,38 +213,22 @@ int Bot::search(int depth, int ply, int alpha, int beta) {
     else if(storedScore < -MATE_VAL + 100) storedScore-= ply;
 
     ttEntry.zobristHash= _board.zobristHash;
-    delete ttEntry.bestMove;                            // Free old move before overwriting
-    ttEntry.bestMove= new core::Move(bestMoveThisNode); // Store a copy of the move
+    ttEntry.bestMove= bestMoveThisNode; // Store a copy of the move
     ttEntry.score= storedScore;
     ttEntry.depth= depth;
     ttEntry.flag= (alpha > originalAlpha) ? TT_EXACT : TT_ALPHA;
 
     return alpha;
 }
-int Bot::evaluate() {
-    positionsEvaluated++;
-    int score= 0;
-    for(const auto& [piece, coord]: _board.pieces) {
-        if(piece == Piece::NONE) continue;
-        int pieceType= Piece::GetPieceType(piece);
-        int pieceValue= PieceValues[pieceType];
-        int pstValue= PieceSquareTables[pieceType][coord.ToIndex()];
-        int value= pieceValue + pstValue;
-        int colorMultiplier= Piece::IsColor(piece, Piece::WHITE) ? 1 : -1;
-        score+= colorMultiplier * value;
-    }
-    int perspectiveMultiplier= _board.activeColor == Piece::WHITE ? 1 : -1;
-    score*= perspectiveMultiplier; // Positive if good for side to move, negative if bad
-    return score;
-}
+
 int Bot::quiesce(int alpha, int beta, int ply) {
     // Generate legal moves to check for checkmate/stalemate
     auto moves= _moveGen.generateLegalMoves();
 
     // Check for checkmate or stalemate
     if(moves.empty()) {
-        auto attackerColor= _board.activeColor == Color::WHITE ? Color::BLACK : Color::WHITE;
-        auto kingPos= _board.activeColor == Color::WHITE ? _board.whiteKingPos : _board.blackKingPos;
+        auto attackerColor= _board.activeColor == Piece::WHITE ? Piece::BLACK : Piece::WHITE;
+        auto kingPos= _board.activeColor == Piece::WHITE ? _board.whiteKingPos : _board.blackKingPos;
         if(MoveGenerator::isSquareAttacked(_board, kingPos, attackerColor)) {
             checkMatesFound++;
             return -MATE_VAL + ply; // Checkmate, prefer faster mates
@@ -245,12 +238,13 @@ int Bot::quiesce(int alpha, int beta, int ply) {
     }
 
     // 1. Stand Pat: Assumes we can just "stop" and not capture anything if our position is good
-    int stand_pat= evaluate();
+    int stand_pat= bot::evaluator::evaluate(_board);
+    positionsEvaluated++;
     if(stand_pat >= beta) return beta;
     if(alpha < stand_pat) alpha= stand_pat;
 
-    // 2. Search only Captures
-    orderMoves(moves, nullptr); // Order captures by MVV-LVA, no TT move in quiescence
+    // 2. Search only Captures and Promotions
+    orderMoves(moves, nullptr, -1); // Order captures by MVV-LVA, no killers in quiescence
 
     for(const auto& move: moves) {
         // FILTER: Only look at Captures and Promotions
@@ -266,22 +260,28 @@ int Bot::quiesce(int alpha, int beta, int ply) {
     return alpha;
 }
 
-std::pair<core::Move, int> Bot::getBestMove(int timeLimitMs) {
+std::pair<core::Move, int> Bot::getBestMove(int timeLimitMs, int maxDepth) {
     checkMatesFound= 0;    // Reset checkmate counter for this search
     positionsEvaluated= 0; // Reset positions evaluated counter for this search
-    auto startTime= std::chrono::high_resolution_clock::now();
+    clearKillers();        // Clear killer moves for new search
+
+    startTimer(timeLimitMs); // Start the timer as we are about to begin searching
+
+    // If no depth limit specified, use a high default
+    int depthLimit= (maxDepth > 0) ? maxDepth : 64;
 
     core::Move bestMove;
     int bestScore= -INF;
     int depthReached= 0;
 
-    for(int depth= 1; depth <= 21; ++depth) { // Iterative deepening
+    for(int depth= 1; depth <= depthLimit; ++depth) { // Iterative deepening
+
         auto moves= _moveGen.generateLegalMoves();
         if(moves.empty()) break; // No moves available
 
         TTEntry& ttEntry= _tt[_board.zobristHash % _tt.size()];
-        core::Move* ttMove= (ttEntry.zobristHash == _board.zobristHash) ? ttEntry.bestMove : nullptr;
-        orderMoves(moves, ttMove); // Move ordering for better alpha-beta performance
+        core::Move* ttMove= (ttEntry.zobristHash == _board.zobristHash) ? &ttEntry.bestMove : nullptr;
+        orderMoves(moves, ttMove, 0); // Move ordering for better alpha-beta performance
 
         // Reset best for this depth - each depth should find its own best move
         core::Move bestMoveThisDepth;
@@ -293,6 +293,8 @@ std::pair<core::Move, int> Bot::getBestMove(int timeLimitMs) {
             int score= -search(depth - 1, 1, -INF, -alpha);
             _board.undoMove();
 
+            if(_stopSearch) break; // If we were signaled to stop during the search, break out of move loop
+
             if(score > bestScoreThisDepth) {
                 bestScoreThisDepth= score;
                 bestMoveThisDepth= move;
@@ -302,18 +304,77 @@ std::pair<core::Move, int> Bot::getBestMove(int timeLimitMs) {
             }
         }
 
+        if(_stopSearch) break; // If we were signaled to stop during the search, break out of depth loop
+
         // Update overall best from this completed depth
         bestMove= bestMoveThisDepth;
         bestScore= bestScoreThisDepth;
         depthReached= depth;
 
-        auto currentTime= std::chrono::high_resolution_clock::now();
-        int elapsedMs= std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - startTime).count();
-        if(elapsedMs >= timeLimitMs) {
-            break; // Time limit reached
+        // printing
+
+        auto elapsedMs= getElapsedTimeMs();
+        // Output search info for GUI
+        std::string pvLine= extractPV(bestMove, depthReached);
+        std::string scoreStr;
+        // UCI scores are always from side-to-move's perspective
+        if(bestScore > MATE_VAL - 100) {
+            // Side to move is delivering mate
+            int pliesToMate= MATE_VAL - bestScore;
+            int movesToMate= (pliesToMate + 1) / 2;
+            scoreStr= "mate " + std::to_string(movesToMate);
+        } else if(bestScore < -MATE_VAL + 100) {
+            // Side to move is getting mated
+            int pliesToMate= bestScore + MATE_VAL;
+            int movesToMate= (pliesToMate + 1) / 2;
+            scoreStr= "mate -" + std::to_string(movesToMate);
+        } else {
+            scoreStr= "cp " + std::to_string(bestScore);
         }
+
+        uint64_t nps= elapsedMs > 0 ? (positionsEvaluated * 1000ULL / elapsedMs) : positionsEvaluated;
+        std::cout << "info" << " depth " << depthReached << " score " << scoreStr << " time " << elapsedMs << " nodes " << positionsEvaluated << " nps " << nps << " pv" << pvLine << std::endl;
     }
-    std::cout << "info" << " depth " << depthReached << " score cp " << bestScore << " time " << timeLimitMs << " nodes " << positionsEvaluated << std::endl;
     return {bestMove, bestScore};
+}
+
+std::string Bot::extractPV(const core::Move& bestMove, int depth) {
+    std::string pv= " " + bestMove.ToString();
+    std::vector<core::Move> movesMade;
+
+    // Make the first move (the one we already found)
+    _board.makeMove(bestMove);
+    movesMade.push_back(bestMove);
+
+    // Follow the TT for the rest of the PV
+    for(int i= 1; i < depth; ++i) {
+        TTEntry& ttEntry= _tt[_board.zobristHash % _tt.size()];
+        if(ttEntry.zobristHash != _board.zobristHash) break;
+
+        core::Move& move= ttEntry.bestMove;
+        if(move.from == move.to) break; // Invalid move
+
+        // Verify move is legal
+        auto legalMoves= _moveGen.generateLegalMoves();
+        bool isLegal= false;
+        for(const auto& lm: legalMoves) {
+            if(lm.from == move.from && lm.to == move.to && lm.promotion == move.promotion) {
+                isLegal= true;
+                break;
+            }
+        }
+        if(!isLegal) break;
+
+        pv+= " " + move.ToString();
+        _board.makeMove(move);
+        movesMade.push_back(move);
+    }
+
+    // Undo all moves to restore board state
+    for(int i= movesMade.size() - 1; i >= 0; --i) {
+        _board.undoMove();
+    }
+
+    return pv;
 }
 } // namespace talawachess

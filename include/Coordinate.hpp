@@ -21,6 +21,9 @@ struct Coordinate {
         int rank= alg[1] - '1';
         return Coordinate(file, rank);
     }
+    static Coordinate FromIndex(int index) {
+        return Coordinate(index % 8, index / 8);
+    }
     std::string toAlgebraic() const {
         if(!IsValid()) {
             throw std::invalid_argument("Invalid coordinate");
